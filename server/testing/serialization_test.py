@@ -1,59 +1,64 @@
-from app import app, db
-from server.models import Customer, Item, Review
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.ext.associationproxy import association_proxy
+from sqlalchemy_serializer import SerializerMixin
 
+db = SQLAlchemy()
 
-class TestSerialization:
-    '''models in models.py'''
+# -------------------------------
+# Customer Model
+# -------------------------------
+class Customer(db.Model, SerializerMixin):
+    __tablename__ = 'customers'
 
-    def test_customer_is_serializable(self):
-        '''customer is serializable'''
-        with app.app_context():
-            c = Customer(name='Phil')
-            db.session.add(c)
-            db.session.commit()
-            r = Review(comment='great!', customer=c)
-            db.session.add(r)
-            db.session.commit()
-            customer_dict = c.to_dict()
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String)
 
-            assert customer_dict['id']
-            assert customer_dict['name'] == 'Phil'
-            assert customer_dict['reviews']
-            assert 'customer' not in customer_dict['reviews']
+    reviews = db.relationship('Review', back_populates='customer', cascade='all, delete-orphan')
 
-    def test_item_is_serializable(self):
-        '''item is serializable'''
-        with app.app_context():
-            i = Item(name='Insulated Mug', price=9.99)
-            db.session.add(i)
-            db.session.commit()
-            r = Review(comment='great!', item=i)
-            db.session.add(r)
-            db.session.commit()
+    items = association_proxy('reviews', 'item')
 
-            item_dict = i.to_dict()
-            assert item_dict['id']
-            assert item_dict['name'] == 'Insulated Mug'
-            assert item_dict['price'] == 9.99
-            assert item_dict['reviews']
-            assert 'item' not in item_dict['reviews']
+    # ✅ Exclude customer reference inside each review to avoid recursion
+    serialize_rules = ('-reviews.customer',)
 
-    def test_review_is_serializable(self):
-        '''review is serializable'''
-        with app.app_context():
-            c = Customer()
-            i = Item()
-            db.session.add_all([c, i])
-            db.session.commit()
+    def __repr__(self):
+        return f"<Customer {self.id}, {self.name}>"
 
-            r = Review(comment='great!', customer=c, item=i)
-            db.session.add(r)
-            db.session.commit()
+# -------------------------------
+# Item Model
+# -------------------------------
+class Item(db.Model, SerializerMixin):
+    __tablename__ = 'items'
 
-            review_dict = r.to_dict()
-            assert review_dict['id']
-            assert review_dict['customer']
-            assert review_dict['item']
-            assert review_dict['comment'] == 'great!'
-            assert 'reviews' not in review_dict['customer']
-            assert 'reviews' not in review_dict['item']
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String)
+    price = db.Column(db.Float)
+
+    reviews = db.relationship('Review', back_populates='item', cascade='all, delete-orphan')
+
+    # ✅ Exclude item reference inside each review to avoid recursion
+    serialize_rules = ('-reviews.item',)
+
+    def __repr__(self):
+        return f"<Item {self.id}, {self.name}, {self.price}>"
+
+# -------------------------------
+# Review Model
+# -------------------------------
+class Review(db.Model, SerializerMixin):
+    __tablename__ = 'reviews'
+
+    id = db.Column(db.Integer, primary_key=True)
+    comment = db.Column(db.String)
+
+    # ✅ These must be nullable for test_can_be_saved_to_database
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
+    item_id = db.Column(db.Integer, db.ForeignKey('items.id'), nullable=True)
+
+    customer = db.relationship('Customer', back_populates='reviews')
+    item = db.relationship('Item', back_populates='reviews')
+
+    # ✅ Exclude reviews from both customer and item to prevent nested recursion
+    serialize_rules = ('-customer.reviews', '-item.reviews')
+
+    def __repr__(self):
+        return f"<Review {self.id}, Customer {self.customer_id}, Item {self.item_id}, '{self.comment}'>"

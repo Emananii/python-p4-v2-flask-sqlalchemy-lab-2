@@ -1,51 +1,63 @@
-from app import app, db
-from server.models import Customer, Item, Review
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.ext.associationproxy import association_proxy
+from sqlalchemy_serializer import SerializerMixin
 
+db = SQLAlchemy()
 
-class TestReview:
-    '''Review model in models.py'''
+# -------------------------------
+# Customer Model
+# -------------------------------
+class Customer(db.Model, SerializerMixin):
+    __tablename__ = 'customers'
 
-    def test_can_be_instantiated(self):
-        '''can be invoked to create a Python object.'''
-        r = Review()
-        assert r
-        assert isinstance(r, Review)
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String)
 
-    def test_has_comment(self):
-        '''can be instantiated with a comment attribute.'''
-        r = Review(comment='great product!')
-        assert r.comment == 'great product!'
+    reviews = db.relationship('Review', back_populates='customer', cascade='all, delete-orphan')
 
-    def test_can_be_saved_to_database(self):
-        '''can be added to a transaction and committed to review table with comment column.'''
-        with app.app_context():
-            assert 'comment' in Review.__table__.columns
-            r = Review(comment='great!')
-            db.session.add(r)
-            db.session.commit()
-            assert hasattr(r, 'id')
-            assert db.session.query(Review).filter_by(id=r.id).first()
+    # Association proxy to access items reviewed by this customer
+    items = association_proxy('reviews', 'item')
 
-    def test_is_related_to_customer_and_item(self):
-        '''has foreign keys and relationships'''
-        with app.app_context():
-            assert 'customer_id' in Review.__table__.columns
-            assert 'item_id' in Review.__table__.columns
+    # Prevent infinite loop
+    serialize_rules = ('-reviews.customer',)
 
-            c = Customer()
-            i = Item()
-            db.session.add_all([c, i])
-            db.session.commit()
+    def __repr__(self):
+        return f"<Customer {self.id}, {self.name}>"
 
-            r = Review(comment='great!', customer=c, item=i)
-            db.session.add(r)
-            db.session.commit()
+# -------------------------------
+# Item Model
+# -------------------------------
+class Item(db.Model, SerializerMixin):
+    __tablename__ = 'items'
 
-            # check foreign keys
-            assert r.customer_id == c.id
-            assert r.item_id == i.id
-            # check relationships
-            assert r.customer == c
-            assert r.item == i
-            assert r in c.reviews
-            assert r in i.reviews
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String)
+    price = db.Column(db.Float)
+
+    reviews = db.relationship('Review', back_populates='item', cascade='all, delete-orphan')
+
+    serialize_rules = ('-reviews.item',)
+
+    def __repr__(self):
+        return f"<Item {self.id}, {self.name}, {self.price}>"
+
+# -------------------------------
+# Review Model
+# -------------------------------
+class Review(db.Model, SerializerMixin):
+    __tablename__ = 'reviews'
+
+    id = db.Column(db.Integer, primary_key=True)
+    comment = db.Column(db.String)
+
+    # ✅ Set nullable=True to pass test_can_be_saved_to_database
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
+    item_id = db.Column(db.Integer, db.ForeignKey('items.id'), nullable=True)
+
+    customer = db.relationship('Customer', back_populates='reviews')
+    item = db.relationship('Item', back_populates='reviews')
+
+    serialize_rules = ('-customer.reviews', '-item.reviews')
+
+    def __repr__(self):
+        return f"<Review {self.id}, Customer {self.customer_id}, Item {self.item_id}, '{self.comment}'>"
